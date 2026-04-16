@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #d9e8ff;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(27, 191, 204, 0.18), transparent 24%),
+    radial-gradient(circle at 80% 10%, rgba(65, 125, 255, 0.13), transparent 20%),
+    linear-gradient(180deg, #090f23 0%, #050913 100%);
+  font-family: "Sora", "Manrope", "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+  letter-spacing: 0.01em;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(120deg, rgba(255, 255, 255, 0.03), transparent 35%),
+    radial-gradient(circle at center, transparent 0 44%, rgba(0, 0, 0, 0.34) 80%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(160, 217, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(160, 217, 255, 0.045) 1px, transparent 1px);
+  background-size: 54px 54px;
+  mask-image: radial-gradient(circle at center, black 38%, transparent 78%);
+}
+
+@layer components {
+  .panel {
+    @apply rounded-[24px] border border-cyan-200/20 bg-slate-950/55 backdrop-blur-xl shadow-glow;
+  }
+
+  .soft-panel {
+    @apply rounded-[24px] border border-cyan-200/20 bg-[linear-gradient(180deg,rgba(14,24,52,0.85)_0%,rgba(8,14,31,0.8)_100%)] backdrop-blur-xl shadow-glow;
+  }
+
+  .hud-panel {
+    @apply rounded-[18px] border border-cyan-200/15 bg-slate-950/60 backdrop-blur-md shadow-glow;
+  }
+
+  .panel-title {
+    @apply font-display text-2xl tracking-[0.12em] uppercase text-cyan-100;
+  }
+
+  .pill {
+    @apply inline-flex items-center rounded-full border border-cyan-200/25 bg-cyan-200/10 px-3 py-1 text-xs uppercase tracking-[0.2em] text-cyan-100/80;
+  }
+
+  .action-btn {
+    @apply rounded-2xl border px-4 py-3 font-medium transition duration-200;
+  }
+
+  .action-btn:disabled {
+    @apply cursor-not-allowed opacity-40;
+  }
+
+  .action-primary {
+    @apply border-cyan-200/35 bg-cyan-300/85 text-slate-950 hover:bg-cyan-200;
+  }
+
+  .action-secondary {
+    @apply border-cyan-100/20 bg-white/5 text-white/90 hover:bg-white/10;
+  }
+
+  .action-warning {
+    @apply border-fuchsia-200/35 bg-fuchsia-300/80 text-slate-950 hover:bg-fuchsia-200;
+  }
+
+  .field-input {
+    @apply w-full rounded-2xl border border-cyan-200/20 bg-slate-950/55 px-4 py-3 text-lg text-white outline-none ring-0 transition focus:border-cyan-200/55;
+  }
+
+  .card-face {
+    background:
+      linear-gradient(180deg, #fefefe 0%, #edf4ff 100%);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.75),
+      0 16px 34px rgba(3, 11, 24, 0.28);
+  }
+
+  .card-face::before {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(8, 18, 39, 0.1);
+    pointer-events: none;
+  }
+
+  .card-face::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.26), transparent 42%),
+      repeating-linear-gradient(45deg, rgba(56, 86, 144, 0.04) 0 8px, rgba(56, 86, 144, 0.08) 8px 16px);
+    opacity: 0.5;
+  }
+
+  .card-face:hover {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.75),
+      0 22px 44px rgba(3, 11, 24, 0.34);
+  }
+
+  .card-mini {
+    background:
+      linear-gradient(180deg, rgba(250, 253, 255, 0.95) 0%, rgba(214, 229, 255, 0.92) 100%);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+      0 8px 20px rgba(0, 10, 27, 0.24);
+  }
+
+  .card-back {
+    background:
+      linear-gradient(180deg, rgba(13, 35, 69, 0.95) 0%, rgba(8, 20, 45, 0.98) 100%);
+    box-shadow:
+      inset 0 0 0 1px rgba(145, 219, 255, 0.12),
+      inset 0 0 0 8px rgba(78, 147, 255, 0.12),
+      0 8px 18px rgba(0, 0, 0, 0.24);
+  }
+
+  .face-crest {
+    background:
+      linear-gradient(180deg, rgba(11, 29, 63, 0.08), rgba(11, 29, 63, 0));
+    box-shadow:
+      inset 0 0 0 1px rgba(11, 29, 63, 0.08);
+  }
+
+  .table-ring {
+    background:
+      radial-gradient(circle at center, rgba(20, 171, 191, 0.2), transparent 58%),
+      linear-gradient(180deg, rgba(8, 18, 43, 0.58), rgba(6, 12, 29, 0.16));
+  }
+}
