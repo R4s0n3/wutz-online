@@ -1070,14 +1070,12 @@ function App() {
             </div>
 
             <div>
-              <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="text-xs uppercase tracking-[0.3em] text-white/55">Your Cards</div>
                   <div className="mt-1 font-display text-2xl text-cyan-50">{self?.name}</div>
-                </div>
-                <div className="flex flex-wrap items-center justify-start gap-3 sm:justify-end">
                   {self ? (
-                    <div className="hud-panel min-w-[12rem] px-4 py-3">
+                    <div className="hud-panel mt-3 w-[min(18rem,100%)] px-4 py-3">
                       <div className="flex items-center justify-between gap-4">
                         <div className="text-xs uppercase tracking-[0.24em] text-white/45">Your Lives</div>
                         <div className="font-display text-lg text-cyan-50">{playerLifeLabel(self)}</div>
@@ -1091,10 +1089,10 @@ function App() {
                       />
                     </div>
                   ) : null}
-                  <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
-                    <span className="pill">{isMyTurn ? "Your turn" : "Waiting"}</span>
-                    <span className="pill">{playerRoleLabel(self, snapshot.options.maxPlayers)}</span>
-                  </div>
+                </div>
+                <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
+                  <span className="pill">{isMyTurn ? "Your turn" : "Waiting"}</span>
+                  <span className="pill">{playerRoleLabel(self, snapshot.options.maxPlayers)}</span>
                 </div>
               </div>
               <div className="flex flex-wrap items-end justify-center gap-3">
