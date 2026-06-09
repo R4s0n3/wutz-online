@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createCustomId } from "mnemonic-id";
 import { socket } from "./lib/socket";
 import { scoreHand, scoreLabel } from "@shared/game";
-import type { Card, GamePhase, PublicRoomInfo, RoomSnapshot } from "@shared/types";
+import type { Card, GamePhase, PlayerSummary, PublicRoomInfo, RoomSnapshot } from "@shared/types";
 
 function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -121,6 +121,72 @@ function phaseLabel(phase: GamePhase) {
 
 function plural(value: number, singular: string, pluralLabel = `${singular}s`) {
   return `${value} ${value === 1 ? singular : pluralLabel}`;
+}
+
+function playerLifeLabel(player?: Pick<PlayerSummary, "lives" | "swimming" | "eliminated">) {
+  if (!player) {
+    return "...";
+  }
+  if (player.eliminated) {
+    return "Out";
+  }
+  if (player.swimming) {
+    return "Swimming";
+  }
+  return plural(player.lives, "life", "lives");
+}
+
+function playerRoleLabel(player?: Pick<PlayerSummary, "isDealer" | "isHost" | "seat">, capacity?: number) {
+  if (!player) {
+    return "Seat";
+  }
+
+  const seatLabel = `Seat ${player.seat + 1}${capacity ? `/${capacity}` : ""}`;
+  if (player.isDealer) {
+    return `Dealer / ${seatLabel}`;
+  }
+  if (player.isHost) {
+    return `Host / ${seatLabel}`;
+  }
+  return seatLabel;
+}
+
+function LifePips({
+  lives,
+  swimming,
+  eliminated,
+  className,
+  pipClassName = "h-2 flex-1"
+}: {
+  lives: number;
+  swimming: boolean;
+  eliminated?: boolean;
+  className?: string;
+  pipClassName?: string;
+}) {
+  return (
+    <div
+      className={cn("flex gap-1", className)}
+      aria-label={eliminated ? "No lives remaining" : playerLifeLabel({ lives, swimming, eliminated: Boolean(eliminated) })}
+    >
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div
+          key={index}
+          className={cn(
+            "rounded-full",
+            pipClassName,
+            eliminated
+              ? "bg-white/10"
+              : index < lives
+                ? "bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.32)]"
+                : swimming && index === 0
+                  ? "bg-sky-300 shadow-[0_0_12px_rgba(125,211,252,0.3)]"
+                  : "bg-white/10"
+          )}
+        />
+      ))}
+    </div>
+  );
 }
 
 function generateDefaultPlayerName() {
@@ -329,20 +395,10 @@ function Seat({ snapshot, playerId }: { snapshot: RoomSnapshot; playerId: string
         </div>
         <div className="text-right text-xs uppercase tracking-[0.18em] text-white/60">
           <div>{player.connected ? "Online" : "Away"}</div>
-          <div>{player.swimming ? "Swimming" : `${player.lives} lives`}</div>
+          <div>{playerLifeLabel(player)}</div>
         </div>
       </div>
-      <div className="mt-3 flex gap-1">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <div
-            key={index}
-            className={cn(
-              "h-2 flex-1 rounded-full",
-              index < player.lives ? "bg-cyan-300" : player.swimming && index === 0 ? "bg-sky-300" : "bg-white/10"
-            )}
-          />
-        ))}
-      </div>
+      <LifePips lives={player.lives} swimming={player.swimming} eliminated={player.eliminated} className="mt-3" />
       <div className="mt-4 flex gap-2">
         {player.revealedHand ? (
           player.revealedHand.map((card) => (
@@ -747,6 +803,7 @@ function App() {
   };
 
   const tableSeats = snapshot ? snapshot.players.filter((player) => player.id !== snapshot.selfId).slice(0, 5) : [];
+  const seatedPlayerCount = snapshot ? snapshot.players.filter((player) => !player.eliminated).length : 0;
   const activeTurn = snapshot ? currentTurnPlayer(snapshot) : undefined;
   const connectionLabel =
     connectionStatus === "online" ? "Live" : connectionStatus === "connecting" ? "Connecting" : "Reconnecting";
@@ -878,6 +935,7 @@ function App() {
                 <span className="pill">Room {snapshot.code}</span>
                 <span className="pill">Round {snapshot.roundNumber || 0}</span>
                 <span className="pill">{phaseLabel(snapshot.phase)}</span>
+                <span className="pill">Seats {seatedPlayerCount}/{snapshot.options.maxPlayers}</span>
                 <span className="pill">{connectionLabel}</span>
                 <button
                   type="button"
@@ -918,6 +976,8 @@ function App() {
                 <div>Deck: {snapshot.drawCount}</div>
                 <div>Discard: {snapshot.discardCount}</div>
                 <div>Passes: {snapshot.consecutivePasses}</div>
+                <div>Seats: {seatedPlayerCount}/{snapshot.options.maxPlayers}</div>
+                <div>Your lives: {playerLifeLabel(self)}</div>
                 <div>Players in: {snapshot.activePlayerCount}</div>
                 <div>{snapshot.options.allowPass ? "Passing allowed" : "No passing"}</div>
               </div>
@@ -1010,12 +1070,32 @@ function App() {
             </div>
 
             <div>
-              <div className="mb-3 flex items-center justify-between">
-                <div>
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+                <div className="min-w-0">
                   <div className="text-xs uppercase tracking-[0.3em] text-white/55">Your Cards</div>
                   <div className="mt-1 font-display text-2xl text-cyan-50">{self?.name}</div>
                 </div>
-                <div className="pill">{isMyTurn ? "Your turn" : "Waiting"}</div>
+                <div className="flex flex-wrap items-center justify-start gap-3 sm:justify-end">
+                  {self ? (
+                    <div className="hud-panel min-w-[12rem] px-4 py-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="text-xs uppercase tracking-[0.24em] text-white/45">Your Lives</div>
+                        <div className="font-display text-lg text-cyan-50">{playerLifeLabel(self)}</div>
+                      </div>
+                      <LifePips
+                        lives={self.lives}
+                        swimming={self.swimming}
+                        eliminated={self.eliminated}
+                        className="mt-2"
+                        pipClassName="h-2.5 flex-1"
+                      />
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
+                    <span className="pill">{isMyTurn ? "Your turn" : "Waiting"}</span>
+                    <span className="pill">{playerRoleLabel(self, snapshot.options.maxPlayers)}</span>
+                  </div>
+                </div>
               </div>
               <div className="flex flex-wrap items-end justify-center gap-3">
                 {snapshot.hand.map((card, index) => (
