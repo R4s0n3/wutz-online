@@ -383,7 +383,7 @@ function NoticeStack({ notices, className }: { notices: Notice[]; className?: st
 }
 
 function App() {
-  const [name, setName] = useState("Heroine");
+  const [name, setName] = useState("PlayerName");
   const [roomCodeInput, setRoomCodeInput] = useState("");
   const [rooms, setRooms] = useState<PublicRoomInfo[]>([]);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
