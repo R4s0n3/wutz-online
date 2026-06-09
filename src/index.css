@@ -154,4 +154,40 @@ body::after {
       radial-gradient(circle at center, rgba(20, 171, 191, 0.2), transparent 58%),
       linear-gradient(180deg, rgba(8, 18, 43, 0.58), rgba(6, 12, 29, 0.16));
   }
+
+  .notice-card {
+    animation: notice-in 260ms ease-out both;
+  }
+
+  .notice-dot.neutral {
+    @apply bg-cyan-200;
+  }
+
+  .notice-dot.action {
+    @apply bg-emerald-200 shadow-[0_0_18px_rgba(167,243,208,0.55)];
+  }
+
+  .notice-dot.success {
+    @apply bg-teal-200 shadow-[0_0_18px_rgba(153,246,228,0.5)];
+  }
+
+  .notice-dot.warning {
+    @apply bg-amber-200 shadow-[0_0_18px_rgba(253,230,138,0.5)];
+  }
+
+  .notice-dot.danger {
+    @apply bg-rose-200 shadow-[0_0_18px_rgba(254,205,211,0.5)];
+  }
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translate3d(12px, -8px, 0) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { socket } from "./lib/socket";
 import { scoreHand, scoreLabel } from "@shared/game";
 import type { Card, GamePhase, PublicRoomInfo, RoomSnapshot } from "@shared/types";
@@ -26,12 +26,72 @@ type ActionState = {
   marketIndex: number | null;
 };
 
-type NoticeTone = "neutral" | "action" | "warning";
+type NoticeTone = "neutral" | "action" | "success" | "warning" | "danger";
+
+type SoundCue = "select" | "join" | "turn" | "success" | "warning" | "error" | "round" | "game";
 
 type Notice = {
   id: number;
-  message: string;
+  title: string;
+  detail?: string;
   tone: NoticeTone;
+};
+
+type PendingRequest = "create-private" | "create-public" | "quickplay" | "join-room" | "start-game" | "game-action";
+
+type ConnectionStatus = "connecting" | "online" | "offline";
+
+type SoundNote = {
+  frequency: number;
+  offset: number;
+  duration: number;
+  gain?: number;
+  type?: OscillatorType;
+};
+
+const NOTICE_STYLE: Record<NoticeTone, string> = {
+  neutral: "border-cyan-200/15 bg-slate-950/70 text-cyan-50",
+  action: "border-emerald-300/25 bg-emerald-300/10 text-emerald-50",
+  success: "border-teal-300/25 bg-teal-300/10 text-teal-50",
+  warning: "border-amber-300/30 bg-amber-300/10 text-amber-50",
+  danger: "border-rose-300/30 bg-rose-300/10 text-rose-50"
+};
+
+const SOUND_PATTERNS: Record<SoundCue, SoundNote[]> = {
+  select: [{ frequency: 520, offset: 0, duration: 0.045, gain: 0.025, type: "triangle" }],
+  join: [
+    { frequency: 392, offset: 0, duration: 0.07, gain: 0.035, type: "sine" },
+    { frequency: 587, offset: 0.08, duration: 0.09, gain: 0.04, type: "sine" }
+  ],
+  turn: [
+    { frequency: 660, offset: 0, duration: 0.08, gain: 0.04, type: "triangle" },
+    { frequency: 880, offset: 0.09, duration: 0.1, gain: 0.045, type: "triangle" },
+    { frequency: 1175, offset: 0.19, duration: 0.13, gain: 0.035, type: "sine" }
+  ],
+  success: [
+    { frequency: 523, offset: 0, duration: 0.08, gain: 0.035, type: "sine" },
+    { frequency: 659, offset: 0.08, duration: 0.08, gain: 0.04, type: "sine" },
+    { frequency: 784, offset: 0.16, duration: 0.11, gain: 0.035, type: "sine" }
+  ],
+  warning: [
+    { frequency: 294, offset: 0, duration: 0.13, gain: 0.04, type: "square" },
+    { frequency: 247, offset: 0.15, duration: 0.16, gain: 0.035, type: "triangle" }
+  ],
+  error: [
+    { frequency: 185, offset: 0, duration: 0.13, gain: 0.045, type: "sawtooth" },
+    { frequency: 147, offset: 0.14, duration: 0.18, gain: 0.035, type: "triangle" }
+  ],
+  round: [
+    { frequency: 330, offset: 0, duration: 0.11, gain: 0.035, type: "sine" },
+    { frequency: 494, offset: 0.12, duration: 0.12, gain: 0.04, type: "sine" },
+    { frequency: 392, offset: 0.26, duration: 0.16, gain: 0.035, type: "triangle" }
+  ],
+  game: [
+    { frequency: 392, offset: 0, duration: 0.12, gain: 0.04, type: "sine" },
+    { frequency: 523, offset: 0.12, duration: 0.12, gain: 0.045, type: "sine" },
+    { frequency: 659, offset: 0.24, duration: 0.12, gain: 0.04, type: "sine" },
+    { frequency: 1047, offset: 0.38, duration: 0.22, gain: 0.035, type: "triangle" }
+  ]
 };
 
 const SUIT_SYMBOL: Record<Card["suit"], string> = {
@@ -40,6 +100,93 @@ const SUIT_SYMBOL: Record<Card["suit"], string> = {
   hearts: "♥",
   diamonds: "♦"
 };
+
+function cardName(card: Card) {
+  return `${card.rank}${SUIT_SYMBOL[card.suit]}`;
+}
+
+function phaseLabel(phase: GamePhase) {
+  switch (phase) {
+    case "lobby":
+      return "Lobby";
+    case "playing":
+      return "Playing";
+    case "round-over":
+      return "Round Over";
+    case "game-over":
+      return "Game Over";
+  }
+}
+
+function plural(value: number, singular: string, pluralLabel = `${singular}s`) {
+  return `${value} ${value === 1 ? singular : pluralLabel}`;
+}
+
+function currentTurnPlayer(snapshot: RoomSnapshot) {
+  return snapshot.players.find((player) => player.isCurrentTurn);
+}
+
+function playerName(snapshot: RoomSnapshot, playerId?: string) {
+  return snapshot.players.find((player) => player.id === playerId)?.name ?? "A player";
+}
+
+function tableStatusCopy(snapshot: RoomSnapshot, isMyTurn: boolean, selfName?: string) {
+  const activeTurn = currentTurnPlayer(snapshot);
+
+  if (snapshot.phase === "lobby") {
+    return snapshot.players.length < 2
+      ? "Invite another player before starting the round."
+      : "Ready when the host starts the round.";
+  }
+
+  if (snapshot.phase === "round-over") {
+    return "Cards are revealed. The next round starts automatically.";
+  }
+
+  if (snapshot.phase === "game-over") {
+    return `${playerName(snapshot, snapshot.winnerId)} wins the table.`;
+  }
+
+  if (isMyTurn) {
+    return snapshot.knockingPlayerId
+      ? "Final turn pressure. Improve your hand before the reveal."
+      : "Choose a trade, sweep the market, pass, or knock.";
+  }
+
+  return activeTurn ? `${activeTurn.name} is deciding.` : `${selfName ?? "Your table"} is waiting for the next move.`;
+}
+
+function selectedTradeCopy(handCard?: Card, marketCard?: Card) {
+  if (handCard && marketCard) {
+    return `Ready to trade ${cardName(handCard)} for ${cardName(marketCard)}.`;
+  }
+  if (handCard) {
+    return `Selected ${cardName(handCard)} from your hand. Pick a center card.`;
+  }
+  if (marketCard) {
+    return `Selected ${cardName(marketCard)} from the center. Pick one of your cards.`;
+  }
+  return "Select one card from your hand and one from the center.";
+}
+
+function noticeForAction(message: string): { title: string; detail: string; tone: NoticeTone; sound?: SoundCue } {
+  if (message.includes("knocked")) {
+    return { title: "Knock called", detail: message, tone: "warning", sound: "warning" };
+  }
+  if (message.includes("reveals") || message.includes("Fire")) {
+    return { title: "Immediate reveal", detail: message, tone: "warning", sound: "round" };
+  }
+  if (message.includes("swept") || message.includes("traded")) {
+    return { title: "Cards moved", detail: message, tone: "neutral", sound: "select" };
+  }
+  if (message.includes("passed") || message.includes("refreshed")) {
+    return { title: "Table flow", detail: message, tone: "neutral" };
+  }
+  if (message.includes("wins")) {
+    return { title: "Winner", detail: message, tone: "success", sound: "game" };
+  }
+  return { title: "Table update", detail: message, tone: "neutral" };
+}
 
 function cardTone(suit: Card["suit"]) {
   return suit === "hearts" || suit === "diamonds" ? "text-rose-700" : "text-slate-900";
@@ -110,21 +257,26 @@ function CardFace({
   card,
   selected,
   onClick,
-  dimmed
+  dimmed,
+  disabled
 }: {
   card: Card;
   selected?: boolean;
   onClick?: () => void;
   dimmed?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
+      aria-pressed={selected}
       className={cn(
         "card-face relative flex h-40 w-28 flex-col justify-between overflow-hidden rounded-[12px] border px-2.5 py-2.5 text-left transition duration-300",
         selected ? "border-cyan-400 -translate-y-3 rotate-[-2deg]" : "border-stone-200/80 hover:-translate-y-2",
-        dimmed && "opacity-55 grayscale"
+        dimmed && "opacity-55 grayscale",
+        disabled && "cursor-not-allowed hover:translate-y-0"
       )}
     >
       <div className="relative z-10 flex items-start justify-start pl-0.5 pt-0.5">
@@ -208,6 +360,28 @@ function Seat({ snapshot, playerId }: { snapshot: RoomSnapshot; playerId: string
   );
 }
 
+function NoticeStack({ notices, className }: { notices: Notice[]; className?: string }) {
+  if (notices.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={cn("z-40 flex w-[min(360px,calc(100%-1.5rem))] flex-col gap-3", className)}>
+      {notices.map((notice) => (
+        <div key={notice.id} className={cn("notice-card hud-panel px-4 py-3", NOTICE_STYLE[notice.tone])}>
+          <div className="flex items-start gap-3">
+            <span className={cn("notice-dot mt-2 h-2.5 w-2.5 shrink-0 rounded-full", notice.tone)} />
+            <div className="min-w-0">
+              <div className="font-semibold leading-5">{notice.title}</div>
+              {notice.detail ? <div className="mt-1 text-sm leading-5 text-white/72">{notice.detail}</div> : null}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const [name, setName] = useState("Heroine");
   const [roomCodeInput, setRoomCodeInput] = useState("");
@@ -216,13 +390,100 @@ function App() {
   const [selected, setSelected] = useState<ActionState>({ handIndex: null, marketIndex: null });
   const [error, setError] = useState<string | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(socket.connected ? "online" : "connecting");
+  const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
   const noticeIdRef = useRef(0);
   const lastActionRef = useRef<string | undefined>(undefined);
-  const lastPhaseRef = useRef<GamePhase | undefined>(undefined);
-  const lastTurnRef = useRef(false);
+  const previousSnapshotRef = useRef<RoomSnapshot | null>(null);
+  const pendingRequestRef = useRef<PendingRequest | null>(null);
+  const hasConnectedRef = useRef(socket.connected);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  const self = snapshot?.players.find((player) => player.id === snapshot.selfId);
+  const isMyTurn = Boolean(self?.isCurrentTurn && snapshot?.phase === "playing");
+  const myScore = scoreHand(snapshot?.hand ?? []);
+  const selectedHandCard = selected.handIndex === null ? undefined : snapshot?.hand[selected.handIndex];
+  const selectedMarketCard = selected.marketIndex === null ? undefined : snapshot?.market[selected.marketIndex];
+
+  const setPending = useCallback((request: PendingRequest | null) => {
+    pendingRequestRef.current = request;
+    setPendingRequest(request);
+  }, []);
+
+  const playSound = useCallback(
+    (cue: SoundCue) => {
+      if (!soundEnabled || typeof window === "undefined") {
+        return;
+      }
+
+      try {
+        const audioWindow = window as Window & { webkitAudioContext?: typeof AudioContext };
+        const AudioContextConstructor = window.AudioContext ?? audioWindow.webkitAudioContext;
+        if (!AudioContextConstructor) {
+          return;
+        }
+
+        const context = audioContextRef.current ?? new AudioContextConstructor();
+        audioContextRef.current = context;
+
+        if (context.state === "suspended") {
+          void context.resume();
+        }
+
+        const startAt = context.currentTime + 0.015;
+        for (const note of SOUND_PATTERNS[cue]) {
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          const noteStart = startAt + note.offset;
+          const noteEnd = noteStart + note.duration;
+
+          oscillator.type = note.type ?? "sine";
+          oscillator.frequency.setValueAtTime(note.frequency, noteStart);
+          gain.gain.setValueAtTime(0.0001, noteStart);
+          gain.gain.exponentialRampToValueAtTime(note.gain ?? 0.035, noteStart + 0.012);
+          gain.gain.exponentialRampToValueAtTime(0.0001, noteEnd);
+
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(noteStart);
+          oscillator.stop(noteEnd + 0.02);
+        }
+      } catch {
+        // Sound is enhancement-only; browser autoplay/audio restrictions should never interrupt play.
+      }
+    },
+    [soundEnabled]
+  );
+
+  const pushNotice = useCallback(
+    (title: string, detail?: string, tone: NoticeTone = "neutral", sound?: SoundCue) => {
+      const id = noticeIdRef.current + 1;
+      noticeIdRef.current = id;
+      setNotices((current) => [{ id, title, detail, tone }, ...current].slice(0, 5));
+      if (sound) {
+        playSound(sound);
+      }
+      window.setTimeout(
+        () => {
+          setNotices((current) => current.filter((notice) => notice.id !== id));
+        },
+        tone === "action" ? 4200 : tone === "danger" ? 6500 : 5400
+      );
+    },
+    [playSound]
+  );
+
+  const showError = useCallback(
+    (title: string, detail?: string) => {
+      setError(detail ?? title);
+      pushNotice(title, detail, "danger", "error");
+    },
+    [pushNotice]
+  );
 
   useEffect(() => {
-    socket.emit("player:upsert", { name }, () => undefined);
+    socket.emit("player:upsert", { name: name.trim() || "Player" }, () => undefined);
     socket.emit("room:list", (roomList) => setRooms(roomList));
 
     const handleSnapshot = (nextSnapshot: RoomSnapshot) => {
@@ -231,7 +492,7 @@ function App() {
     };
 
     const handleRoomList = (roomList: PublicRoomInfo[]) => setRooms(roomList);
-    const handleError = (payload: { error: string }) => setError(payload.error);
+    const handleError = (payload: { error: string }) => showError("Table error", payload.error);
 
     socket.on("room:snapshot", handleSnapshot);
     socket.on("room:list", handleRoomList);
@@ -242,77 +503,215 @@ function App() {
       socket.off("room:list", handleRoomList);
       socket.off("room:error", handleError);
     };
-  }, [name]);
+  }, [name, showError]);
 
-  const self = snapshot?.players.find((player) => player.id === snapshot.selfId);
-  const isMyTurn = Boolean(self?.isCurrentTurn && snapshot?.phase === "playing");
-  const myScore = scoreHand(snapshot?.hand ?? []);
+  useEffect(() => {
+    const handleConnect = () => {
+      setConnectionStatus("online");
+      if (hasConnectedRef.current) {
+        pushNotice("Reconnected", "Live table updates are back.", "success", "success");
+      }
+      hasConnectedRef.current = true;
+    };
 
-  const pushNotice = (message: string, tone: NoticeTone = "neutral") => {
-    const id = noticeIdRef.current + 1;
-    noticeIdRef.current = id;
-    setNotices((current) => [{ id, message, tone }, ...current].slice(0, 4));
-    window.setTimeout(() => {
-      setNotices((current) => current.filter((notice) => notice.id !== id));
-    }, tone === "action" ? 3600 : 4800);
-  };
+    const handleDisconnect = () => {
+      setConnectionStatus("offline");
+      pushNotice("Connection lost", "Trying to reconnect to the table.", "warning", "warning");
+    };
+
+    const handleConnectError = () => {
+      setConnectionStatus("offline");
+      pushNotice("Server unreachable", "Live updates are paused until the socket reconnects.", "danger", "error");
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
+    socket.on("connect_error", handleConnectError);
+
+    return () => {
+      socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
+      socket.off("connect_error", handleConnectError);
+    };
+  }, [pushNotice]);
+
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!snapshot) {
       return;
     }
 
+    const previous = previousSnapshotRef.current;
+    const selfPlayer = snapshot.players.find((player) => player.id === snapshot.selfId);
+
+    if (!previous) {
+      if (!pendingRequestRef.current) {
+        pushNotice(
+          "You're seated",
+          snapshot.options.isPrivate ? `Share room code ${snapshot.code}.` : `${snapshot.players.length}/${snapshot.options.maxPlayers} seats filled.`,
+          "success",
+          "join"
+        );
+      }
+      previousSnapshotRef.current = snapshot;
+      lastActionRef.current = snapshot.lastAction;
+      setPending(null);
+      return;
+    }
+
+    const previousPlayersById = new Map(previous.players.map((player) => [player.id, player]));
+    const previousSelf = previous.players.find((player) => player.id === previous.selfId);
+    const onlinePlayerCount = snapshot.players.filter((player) => player.connected && !player.eliminated).length;
+
+    for (const player of snapshot.players) {
+      const previousPlayer = previousPlayersById.get(player.id);
+      if (!previousPlayer && player.id !== snapshot.selfId) {
+        pushNotice(
+          `${player.name} joined`,
+          `${onlinePlayerCount}/${snapshot.options.maxPlayers} active seats.`,
+          "success",
+          "join"
+        );
+      } else if (previousPlayer && previousPlayer.connected !== player.connected && player.id !== snapshot.selfId) {
+        pushNotice(
+          player.connected ? `${player.name} returned` : `${player.name} disconnected`,
+          player.connected ? "They are back at the table." : "Their seat stays reserved for now.",
+          player.connected ? "success" : "warning",
+          player.connected ? "join" : "warning"
+        );
+      } else if (previousPlayer && !previousPlayer.eliminated && player.eliminated && player.id !== snapshot.selfId) {
+        pushNotice(`${player.name} is out`, "One fewer player remains at the table.", "warning", "warning");
+      }
+    }
+
+    if (previousSelf && selfPlayer && previous.phase !== snapshot.phase && (snapshot.phase === "round-over" || snapshot.phase === "game-over")) {
+      if (!previousSelf.eliminated && selfPlayer.eliminated) {
+        pushNotice("You're out", "Your seat is now spectating the rest of the table.", "danger", "warning");
+      } else if (!previousSelf.swimming && selfPlayer.swimming) {
+        pushNotice("You're swimming", "No lives left. The next lost round eliminates you.", "warning", "warning");
+      } else if (selfPlayer.lives < previousSelf.lives) {
+        pushNotice("Life lost", `${plural(selfPlayer.lives, "life", "lives")} remaining.`, "warning", "warning");
+      }
+    }
+
+    const phaseChanged = previous.phase !== snapshot.phase;
+    if (phaseChanged) {
+      const turnPlayer = currentTurnPlayer(snapshot);
+      if (snapshot.phase === "playing") {
+        pushNotice(
+          `Round ${snapshot.roundNumber} started`,
+          turnPlayer ? `${turnPlayer.id === snapshot.selfId ? "You have" : `${turnPlayer.name} has`} the first move.` : "Cards are dealt.",
+          "success",
+          "round"
+        );
+      } else if (snapshot.phase === "round-over") {
+        const scoreDetail = typeof selfPlayer?.score === "number" ? `Your reveal: ${scoreLabel(selfPlayer.score)}.` : undefined;
+        pushNotice("Round over", [scoreDetail, snapshot.lastAction].filter(Boolean).join(" "), "warning", "round");
+      } else if (snapshot.phase === "game-over") {
+        pushNotice(
+          "Table finished",
+          `${playerName(snapshot, snapshot.winnerId)} wins the table.`,
+          snapshot.winnerId === snapshot.selfId ? "success" : "warning",
+          "game"
+        );
+      }
+    }
+
     if (snapshot.lastAction && snapshot.lastAction !== lastActionRef.current) {
-      pushNotice(snapshot.lastAction, snapshot.knockingPlayerId ? "warning" : "neutral");
+      const skipRoundStart = phaseChanged && snapshot.lastAction === "A new round begins.";
+      const skipResolvedPhaseAction = phaseChanged && (snapshot.phase === "round-over" || snapshot.phase === "game-over");
+      if (!skipRoundStart && !skipResolvedPhaseAction) {
+        const notice = noticeForAction(snapshot.lastAction);
+        pushNotice(notice.title, notice.detail, notice.tone, notice.sound);
+      }
       lastActionRef.current = snapshot.lastAction;
     }
 
-    if (snapshot.phase !== lastPhaseRef.current) {
-      if (snapshot.phase === "round-over") {
-        pushNotice("Round over. Cards are revealed.", "warning");
-      }
-      if (snapshot.phase === "game-over") {
+    const turnPlayer = currentTurnPlayer(snapshot);
+    const previousTurnPlayer = currentTurnPlayer(previous);
+    if (snapshot.phase === "playing" && turnPlayer?.id !== previousTurnPlayer?.id) {
+      if (turnPlayer?.id === snapshot.selfId) {
         pushNotice(
-          `${snapshot.players.find((player) => player.id === snapshot.winnerId)?.name ?? "A player"} takes the table.`,
-          "warning"
+          snapshot.knockingPlayerId ? "Your last-chance turn" : "Your turn",
+          snapshot.knockingPlayerId
+            ? "The round is closing. Make this move count."
+            : selectedTradeCopy(selectedHandCard, selectedMarketCard),
+          "action",
+          "turn"
         );
+      } else if (previousTurnPlayer?.id === snapshot.selfId && turnPlayer) {
+        pushNotice("Move locked", `${turnPlayer.name} is up next.`, "neutral");
       }
-      lastPhaseRef.current = snapshot.phase;
     }
 
-    if (isMyTurn && !lastTurnRef.current) {
-      pushNotice("Your turn. Make your move.", "action");
-    }
-
-    lastTurnRef.current = isMyTurn;
-  }, [isMyTurn, snapshot]);
+    previousSnapshotRef.current = snapshot;
+  }, [pushNotice, selectedHandCard, selectedMarketCard, setPending, snapshot]);
 
   const createRoom = (isPrivate: boolean) => {
+    const request: PendingRequest = isPrivate ? "create-private" : "create-public";
+    setPending(request);
+    setError(null);
+    playSound("select");
     socket.emit(
       "room:create",
-      { name, isPrivate, maxPlayers: 6, allowPass: true },
-      () => setError(null)
+      { name: name.trim() || "Player", isPrivate, maxPlayers: 6, allowPass: true },
+      ({ code }) => {
+        setPending(null);
+        setError(null);
+        pushNotice(isPrivate ? "Private table ready" : "Public table ready", `Room code ${code}.`, "success", "join");
+      }
     );
   };
 
   const quickplay = () => {
-    socket.emit("room:quickplay", { name }, () => setError(null));
+    setPending("quickplay");
+    setError(null);
+    playSound("select");
+    socket.emit("room:quickplay", { name: name.trim() || "Player" }, ({ code }) => {
+      setPending(null);
+      setError(null);
+      pushNotice("Quickplay seat found", `You're seated at room ${code}.`, "success", "join");
+    });
   };
 
   const joinRoom = (roomIdOrCode: string) => {
-    socket.emit("room:join", { roomIdOrCode, name }, (response) => {
+    const trimmedRoom = roomIdOrCode.trim().toUpperCase();
+    if (!trimmedRoom) {
+      showError("Room code required", "Enter a room code before joining.");
+      return;
+    }
+
+    setPending("join-room");
+    setError(null);
+    playSound("select");
+    socket.emit("room:join", { roomIdOrCode: trimmedRoom, name: name.trim() || "Player" }, (response) => {
+      setPending(null);
       if (!response.ok) {
-        setError(response.error ?? "Unable to join room.");
+        showError("Couldn't join table", response.error ?? "Unable to join room.");
         return;
       }
       setError(null);
+      setRoomCodeInput("");
+      pushNotice("Joined table", `You're now seated in room ${trimmedRoom}.`, "success", "join");
     });
   };
 
   const startGame = () => {
+    setPending("start-game");
+    setError(null);
+    playSound("select");
     socket.emit("game:start", (response) => {
+      setPending(null);
       if (!response.ok) {
-        setError(response.error ?? "Unable to start game.");
+        showError("Couldn't start round", response.error ?? "Unable to start game.");
       }
     });
   };
@@ -324,9 +723,13 @@ function App() {
       | { type: "pass" }
       | { type: "knock" }
   ) => {
+    setPending("game-action");
+    setError(null);
+    playSound("select");
     socket.emit("game:action", action, (response) => {
+      setPending(null);
       if (!response.ok) {
-        setError(response.error ?? "Action failed.");
+        showError("Move rejected", response.error ?? "Action failed.");
         return;
       }
       setError(null);
@@ -334,11 +737,17 @@ function App() {
   };
 
   const tableSeats = snapshot ? snapshot.players.filter((player) => player.id !== snapshot.selfId).slice(0, 5) : [];
+  const activeTurn = snapshot ? currentTurnPlayer(snapshot) : undefined;
+  const connectionLabel =
+    connectionStatus === "online" ? "Live" : connectionStatus === "connecting" ? "Connecting" : "Reconnecting";
+  const hasPendingRequest = pendingRequest !== null;
+  const isSubmittingMove = pendingRequest === "game-action";
 
   if (!snapshot) {
     return (
       <main className="relative min-h-screen overflow-hidden px-6 py-8 text-white">
         <TableBackdrop />
+        <NoticeStack notices={notices} className="fixed right-4 top-4 md:right-6 md:top-6" />
         <div className="relative mx-auto flex min-h-[calc(100vh-4rem)] max-w-6xl items-center">
           <section className="soft-panel grid w-full gap-8 overflow-hidden p-8 lg:grid-cols-[1.2fr_0.98fr] lg:p-12">
             <div>
@@ -364,6 +773,16 @@ function App() {
 
             <section className="rounded-[28px] border border-white/10 bg-black/20 p-6 backdrop-blur-xl">
               <div className="panel-title">Take A Seat</div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="pill">{connectionLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => setSoundEnabled((current) => !current)}
+                  className="pill hover:border-cyan-100/45 hover:bg-cyan-100/15"
+                >
+                  {soundEnabled ? "Sound On" : "Sound Off"}
+                </button>
+              </div>
               <label className="mt-6 block text-sm uppercase tracking-[0.2em] text-white/60">Name At The Table</label>
               <input
                 value={name}
@@ -371,14 +790,26 @@ function App() {
                 className="field-input mt-2"
               />
               <div className="mt-6 grid gap-3">
-                <button onClick={() => createRoom(true)} className="action-btn action-primary">
-                  Open A Private Table
+                <button
+                  onClick={() => createRoom(true)}
+                  disabled={hasPendingRequest}
+                  className="action-btn action-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {pendingRequest === "create-private" ? "Opening Private Table..." : "Open A Private Table"}
                 </button>
-                <button onClick={() => createRoom(false)} className="action-btn action-secondary">
-                  Open A Public Table
+                <button
+                  onClick={() => createRoom(false)}
+                  disabled={hasPendingRequest}
+                  className="action-btn action-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {pendingRequest === "create-public" ? "Opening Public Table..." : "Open A Public Table"}
                 </button>
-                <button onClick={quickplay} className="action-btn action-secondary">
-                  Join The Next Open Seat
+                <button
+                  onClick={quickplay}
+                  disabled={hasPendingRequest}
+                  className="action-btn action-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {pendingRequest === "quickplay" ? "Finding A Seat..." : "Join The Next Open Seat"}
                 </button>
               </div>
               <div className="mt-8 border-t border-white/10 pt-6">
@@ -391,9 +822,10 @@ function App() {
                   />
                   <button
                     onClick={() => joinRoom(roomCodeInput)}
+                    disabled={hasPendingRequest}
                     className="action-btn action-secondary whitespace-nowrap"
                   >
-                    Join
+                    {pendingRequest === "join-room" ? "Joining..." : "Join"}
                   </button>
                 </div>
               </div>
@@ -405,13 +837,14 @@ function App() {
                     <button
                       key={room.roomId}
                       onClick={() => joinRoom(room.code)}
-                      className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left"
+                      disabled={hasPendingRequest}
+                      className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <span>
                         <span className="block font-display text-xl text-cyan-50">{room.code}</span>
                         <span className="block text-sm text-white/55">{room.playerCount}/{room.maxPlayers} seated</span>
                       </span>
-                      <span className="pill">{room.phase}</span>
+                      <span className="pill">{phaseLabel(room.phase)}</span>
                     </button>
                   ))}
                 </div>
@@ -434,22 +867,30 @@ function App() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="pill">Room {snapshot.code}</span>
                 <span className="pill">Round {snapshot.roundNumber || 0}</span>
-                <span className="pill">{snapshot.phase}</span>
+                <span className="pill">{phaseLabel(snapshot.phase)}</span>
+                <span className="pill">{connectionLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => setSoundEnabled((current) => !current)}
+                  className="pill hover:border-cyan-100/45 hover:bg-cyan-100/15"
+                >
+                  {soundEnabled ? "Sound On" : "Sound Off"}
+                </button>
               </div>
               <div className="mt-3 flex items-center justify-between gap-4">
                 <div>
                   <div className="font-display text-2xl text-cyan-50">Wutz Table</div>
                   <div className="mt-1 text-sm text-white/65">
-                    {isMyTurn ? "Your turn at the table." : snapshot.lastAction ?? "Waiting for the next move."}
+                    {tableStatusCopy(snapshot, isMyTurn, self?.name)}
                   </div>
                 </div>
                 {snapshot.phase === "lobby" ? (
                   <button
                     onClick={startGame}
-                    disabled={!self?.isHost}
+                    disabled={!self?.isHost || pendingRequest === "start-game"}
                     className="action-btn action-primary disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {self?.isHost ? "Start" : "Host Starts"}
+                    {pendingRequest === "start-game" ? "Starting..." : self?.isHost ? "Start" : "Host Starts"}
                   </button>
                 ) : null}
               </div>
@@ -457,20 +898,7 @@ function App() {
             </div>
           </div>
 
-          <div className="absolute right-3 top-3 z-20 flex w-[min(340px,calc(100%-1.5rem))] flex-col gap-3 md:right-6 md:top-6">
-            {notices.map((notice) => (
-              <div
-                key={notice.id}
-                className={cn(
-                  "hud-panel px-4 py-3 text-sm leading-6",
-                  notice.tone === "action" && "border-emerald-300/20 bg-emerald-300/10 text-emerald-50",
-                  notice.tone === "warning" && "border-fuchsia-300/20 bg-fuchsia-300/10 text-fuchsia-50"
-                )}
-              >
-                {notice.message}
-              </div>
-            ))}
-          </div>
+          <NoticeStack notices={notices} className="absolute right-3 top-3 md:right-6 md:top-6" />
 
           <div className="absolute bottom-3 left-3 z-20 w-[min(320px,calc(100%-1.5rem))] md:bottom-6 md:left-6">
             <div className="hud-panel p-4">
@@ -485,8 +913,10 @@ function App() {
               </div>
               {snapshot.knockingPlayerId ? (
                 <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80">
-                  {snapshot.players.find((player) => player.id === snapshot.knockingPlayerId)?.name} knocked. One last turn
-                  goes around the table.
+                  {playerName(snapshot, snapshot.knockingPlayerId)} knocked.{" "}
+                  {snapshot.finalTurnsRemaining > 0
+                    ? `${plural(snapshot.finalTurnsRemaining, "final turn")} left before the reveal.`
+                    : "The reveal is coming up."}
                 </div>
               ) : null}
             </div>
@@ -495,9 +925,16 @@ function App() {
           <div className="absolute bottom-3 right-3 z-20 w-[min(320px,calc(100%-1.5rem))] md:bottom-6 md:right-6">
             <div className="hud-panel p-4">
               <div className="text-xs uppercase tracking-[0.24em] text-white/45">Your Move</div>
+              <div className="mt-2 text-sm leading-5 text-white/70">
+                {isMyTurn
+                  ? selectedTradeCopy(selectedHandCard, selectedMarketCard)
+                  : activeTurn
+                    ? `Waiting on ${activeTurn.name}.`
+                    : "Waiting for the next move."}
+              </div>
               <div className="mt-3 grid gap-3">
                 <button
-                  disabled={!isMyTurn || selected.handIndex === null || selected.marketIndex === null}
+                  disabled={!isMyTurn || isSubmittingMove || selected.handIndex === null || selected.marketIndex === null}
                   onClick={() =>
                     submitAction({
                       type: "swap-one",
@@ -507,10 +944,10 @@ function App() {
                   }
                   className="action-btn action-primary w-full disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Trade Selected
+                  {isSubmittingMove ? "Sending..." : "Trade Selected"}
                 </button>
                 <button
-                  disabled={!isMyTurn}
+                  disabled={!isMyTurn || isSubmittingMove}
                   onClick={() => submitAction({ type: "swap-all" })}
                   className="action-btn action-secondary w-full disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -518,14 +955,14 @@ function App() {
                 </button>
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    disabled={!isMyTurn || !snapshot.options.allowPass}
+                    disabled={!isMyTurn || isSubmittingMove || !snapshot.options.allowPass}
                     onClick={() => submitAction({ type: "pass" })}
                     className="action-btn action-secondary disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Pass
                   </button>
                   <button
-                    disabled={!isMyTurn}
+                    disabled={!isMyTurn || isSubmittingMove}
                     onClick={() => submitAction({ type: "knock" })}
                     className="action-btn action-warning disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -551,8 +988,12 @@ function App() {
                     key={card.id}
                     card={card}
                     selected={selected.marketIndex === index}
-                    onClick={() => setSelected((current) => ({ ...current, marketIndex: index }))}
+                    onClick={() => {
+                      playSound("select");
+                      setSelected((current) => ({ ...current, marketIndex: index }));
+                    }}
                     dimmed={!isMyTurn}
+                    disabled={!isMyTurn || isSubmittingMove}
                   />
                 ))}
               </div>
@@ -579,8 +1020,12 @@ function App() {
                     <CardFace
                       card={card}
                       selected={selected.handIndex === index}
-                      onClick={() => setSelected((current) => ({ ...current, handIndex: index }))}
+                      onClick={() => {
+                        playSound("select");
+                        setSelected((current) => ({ ...current, handIndex: index }));
+                      }}
                       dimmed={!isMyTurn}
+                      disabled={!isMyTurn || isSubmittingMove}
                     />
                   </div>
                 ))}

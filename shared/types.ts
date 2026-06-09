@@ -47,6 +47,7 @@ export type RoomSnapshot = {
   lastAction?: string;
   winnerId?: string;
   knockingPlayerId?: string;
+  finalTurnsRemaining: number;
   consecutivePasses: number;
   activePlayerCount: number;
   roundNumber: number;

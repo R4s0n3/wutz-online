@@ -384,6 +384,7 @@ export function snapshotFor(room: ServerRoom, selfId: string): RoomSnapshot {
     lastAction: room.lastAction,
     winnerId: room.winnerId,
     knockingPlayerId: room.knockingPlayerId,
+    finalTurnsRemaining: room.finalTurnsRemaining,
     consecutivePasses: room.consecutivePasses,
     activePlayerCount: livingPlayers.length,
     roundNumber: room.roundNumber
