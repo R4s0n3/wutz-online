@@ -10,7 +10,8 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "tsc --project tsconfig.client.json && vite build",
     "build:server": "tsc --project tsconfig.server.json",
-    "check": "tsc --project tsconfig.client.json --noEmit && tsc --project tsconfig.server.json --noEmit"
+    "check": "tsc --project tsconfig.client.json --noEmit && tsc --project tsconfig.server.json --noEmit",
+    "start": "node dist-server/server/index.js"
   },
   "dependencies": {
     "express": "^4.21.2",

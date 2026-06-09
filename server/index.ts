@@ -1,6 +1,8 @@
 import express from "express";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createRoom,
   resolveAction,
@@ -10,6 +12,9 @@ import {
   type ServerRoom
 } from "../shared/game.js";
 import type { ClientToServerEvents, PublicRoomInfo, RoomOptions, ServerToClientEvents } from "../shared/types.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -21,6 +26,18 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   }
 });
 
+const clientDist = path.join(__dirname, "..", "..", "dist");
+
+app.get("/health", (_request, response) => {
+  response.json({ ok: true });
+});
+
+app.use(express.static(clientDist));
+
+app.get("*", (_request, response) => {
+  response.sendFile(path.join(clientDist, "index.html"));
+});
+
 type SocketPlayer = {
   id: string;
   name: string;
@@ -29,10 +46,6 @@ type SocketPlayer = {
 
 const rooms = new Map<string, ServerRoom>();
 const players = new Map<string, SocketPlayer>();
-
-app.get("/health", (_request, response) => {
-  response.json({ ok: true });
-});
 
 function randomCode(length = 5): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
