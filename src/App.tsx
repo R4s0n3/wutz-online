@@ -872,8 +872,8 @@ function App() {
       <TableBackdrop />
       <div className="relative mx-auto flex max-w-7xl">
         <section className="soft-panel table-ring relative min-h-[760px] w-full overflow-hidden p-4 md:p-6">
-          <div className="absolute left-3 top-3 z-20 w-[min(320px,calc(100%-1.5rem))] md:left-6 md:top-6">
-            <div className="hud-panel p-4">
+          <div className="absolute left-3 top-3 z-30 w-[min(420px,calc(100%-1.5rem))] md:left-6 md:top-6">
+            <div className="hud-panel p-4 md:p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="pill">Room {snapshot.code}</span>
                 <span className="pill">Round {snapshot.roundNumber || 0}</span>
@@ -983,7 +983,7 @@ function App() {
             </div>
           </div>
 
-          <div className="relative flex min-h-[720px] flex-col justify-between pb-40 pt-32 md:pb-44 md:pt-32">
+          <div className="relative flex min-h-[780px] flex-col justify-between pb-44 pt-72 sm:pt-64 md:min-h-[800px] md:pb-48 md:pt-60 lg:pt-56">
             <div className="grid gap-4 md:grid-cols-3">
               {tableSeats.map((player) => (
                 <Seat key={player.id} snapshot={snapshot} playerId={player.id} />
