@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createCustomId } from "mnemonic-id";
 import { socket } from "./lib/socket";
 import { scoreHand, scoreLabel } from "@shared/game";
 import type { Card, GamePhase, PublicRoomInfo, RoomSnapshot } from "@shared/types";
@@ -120,6 +121,15 @@ function phaseLabel(phase: GamePhase) {
 
 function plural(value: number, singular: string, pluralLabel = `${singular}s`) {
   return `${value} ${value === 1 ? singular : pluralLabel}`;
+}
+
+function generateDefaultPlayerName() {
+  return createCustomId({
+    adjectives: 1,
+    subject: true,
+    numberSuffix: 3,
+    delimiter: "-"
+  });
 }
 
 function currentTurnPlayer(snapshot: RoomSnapshot) {
@@ -383,7 +393,7 @@ function NoticeStack({ notices, className }: { notices: Notice[]; className?: st
 }
 
 function App() {
-  const [name, setName] = useState("PlayerName");
+  const [name, setName] = useState(generateDefaultPlayerName);
   const [roomCodeInput, setRoomCodeInput] = useState("");
   const [rooms, setRooms] = useState<PublicRoomInfo[]>([]);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
